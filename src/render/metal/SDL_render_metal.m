@@ -1045,6 +1045,44 @@ METAL_QueueDrawPoints(SDL_Renderer * renderer, SDL_RenderCommand *cmd, const SDL
 }
 
 static int
+METAL_QueueDrawLines(SDL_Renderer * renderer, SDL_RenderCommand *cmd, const SDL_FPoint * points, int count)
+{
+    SDL_assert(count >= 2);  /* should have been checked at the higher level. */
+
+    const size_t vertlen = (sizeof (float) * 2) * count;
+    float *verts = (float *) SDL_AllocateRenderVertices(renderer, vertlen, DEVICE_ALIGN(8), &cmd->data.draw.first);
+    if (!verts) {
+        return -1;
+    }
+    cmd->data.draw.count = count;
+    SDL_memcpy(verts, points, vertlen);
+
+    /* If the line segment is completely horizontal or vertical,
+       make it one pixel longer, to satisfy the diamond-exit rule.
+       We should probably do this for diagonal lines too, but we'd have to
+       do some trigonometry to figure out the correct pixel and generally
+       when we have problems with pixel perfection, it's for straight lines
+       that are missing a pixel that frames something and not arbitrary
+       angles. Maybe !!! FIXME for later, though. */
+
+    points += count - 2;  /* update the last line. */
+    verts += (count * 2) - 2;
+
+    const float xstart = points[0].x;
+    const float ystart = points[0].y;
+    const float xend = points[1].x;
+    const float yend = points[1].y;
+
+    if (ystart == yend) {  /* horizontal line */
+        verts[0] += (xend > xstart) ? 1.0f : -1.0f;
+    } else if (xstart == xend) {  /* vertical line */
+        verts[1] += (yend > ystart) ? 1.0f : -1.0f;
+    }
+
+    return 0;
+}
+
+static int
 METAL_QueueFillRects(SDL_Renderer * renderer, SDL_RenderCommand *cmd, const SDL_FRect * rects, int count)
 {
     const size_t vertlen = (sizeof (float) * 8) * count;
@@ -1518,15 +1556,21 @@ METAL_RenderPresent(SDL_Renderer * renderer)
 { @autoreleasepool {
     METAL_RenderData *data = (__bridge METAL_RenderData *) renderer->driverdata;
 
-    if (data.mtlcmdencoder != nil) {
-        [data.mtlcmdencoder endEncoding];
+    // If we don't have a command buffer, we can't present, so activate to get one.
+    if (data.mtlcmdencoder == nil) {
+        // We haven't even gotten a backbuffer yet? Clear it to black. Otherwise, load the existing data.
+        if (data.mtlbackbuffer == nil) {
+            MTLClearColor color = MTLClearColorMake(0.0f, 0.0f, 0.0f, 1.0f);
+            METAL_ActivateRenderCommandEncoder(renderer, MTLLoadActionClear, &color, nil);
+        } else {
+            METAL_ActivateRenderCommandEncoder(renderer, MTLLoadActionLoad, NULL, nil);
+        }
     }
-    if (data.mtlbackbuffer != nil) {
-        [data.mtlcmdbuffer presentDrawable:data.mtlbackbuffer];
-    }
-    if (data.mtlcmdbuffer != nil) {
-        [data.mtlcmdbuffer commit];
-    }
+
+    [data.mtlcmdencoder endEncoding];
+    [data.mtlcmdbuffer presentDrawable:data.mtlbackbuffer];
+    [data.mtlcmdbuffer commit];
+
     data.mtlcmdencoder = nil;
     data.mtlcmdbuffer = nil;
     data.mtlbackbuffer = nil;
@@ -1807,7 +1851,7 @@ METAL_CreateRenderer(SDL_Window * window, Uint32 flags)
     renderer->QueueSetViewport = METAL_QueueSetViewport;
     renderer->QueueSetDrawColor = METAL_QueueSetDrawColor;
     renderer->QueueDrawPoints = METAL_QueueDrawPoints;
-    renderer->QueueDrawLines = METAL_QueueDrawPoints;  // lines and points queue the same way.
+    renderer->QueueDrawLines = METAL_QueueDrawLines;
     renderer->QueueFillRects = METAL_QueueFillRects;
     renderer->QueueCopy = METAL_QueueCopy;
     renderer->QueueCopyEx = METAL_QueueCopyEx;

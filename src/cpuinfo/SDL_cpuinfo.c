@@ -28,6 +28,7 @@
 #include "../core/windows/SDL_windows.h"
 #endif
 #if defined(__OS2__)
+#undef HAVE_SYSCTLBYNAME
 #define INCL_DOS
 #include <os2.h>
 #ifndef QSV_NUMPROCESSORS
@@ -49,7 +50,7 @@
 #endif
 #if defined(__MACOSX__) && (defined(__ppc__) || defined(__ppc64__))
 #include <sys/sysctl.h>         /* For AltiVec check */
-#elif defined(__OpenBSD__) && defined(__powerpc__)
+#elif (defined(__OpenBSD__) || defined(__FreeBSD__)) && defined(__powerpc__)
 #include <sys/param.h>
 #include <sys/sysctl.h> /* For AltiVec check */
 #include <machine/cpu.h>
@@ -314,9 +315,11 @@ CPU_haveAltiVec(void)
 {
     volatile int altivec = 0;
 #ifndef SDL_CPUINFO_DISABLED
-#if (defined(__MACOSX__) && (defined(__ppc__) || defined(__ppc64__))) || (defined(__OpenBSD__) && defined(__powerpc__))
+#if (defined(__MACOSX__) && (defined(__ppc__) || defined(__ppc64__))) || (defined(__OpenBSD__) && defined(__powerpc__)) || (defined(__FreeBSD__) && defined(__powerpc__))
 #ifdef __OpenBSD__
     int selectors[2] = { CTL_MACHDEP, CPU_ALTIVEC };
+#elif defined(__FreeBSD__)
+    int selectors[2] = { CTL_HW, PPC_FEATURE_HAS_ALTIVEC };
 #else
     int selectors[2] = { CTL_HW, HW_VECTORUNIT };
 #endif
@@ -702,7 +705,7 @@ SDL_GetCPUCacheLineSize(void)
     const char *cpuType = SDL_GetCPUType();
     int a, b, c, d;
     (void) a; (void) b; (void) c; (void) d;
-    if (SDL_strcmp(cpuType, "GenuineIntel") == 0) {
+   if (SDL_strcmp(cpuType, "GenuineIntel") == 0 || SDL_strcmp(cpuType, "CentaurHauls") == 0 || SDL_strcmp(cpuType, "  Shanghai  ") == 0) {
         cpuid(0x00000001, a, b, c, d);
         return (((b >> 8) & 0xff) * 8);
     } else if (SDL_strcmp(cpuType, "AuthenticAMD") == 0 || SDL_strcmp(cpuType, "HygonGenuine") == 0) {
@@ -966,7 +969,7 @@ SDL_SIMDRealloc(void *mem, const size_t len)
     const size_t padded = (padding != alignment) ? (len + padding) : len;
     Uint8 *retval = (Uint8*) mem;
     void *oldmem = mem;
-    size_t memdiff, ptrdiff;
+    size_t memdiff = 0, ptrdiff;
     Uint8 *ptr;
 
     if (mem) {

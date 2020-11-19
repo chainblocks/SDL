@@ -249,6 +249,20 @@ SDL_SetSurfaceRLE(SDL_Surface * surface, int flag)
     return 0;
 }
 
+SDL_bool
+SDL_HasSurfaceRLE(SDL_Surface * surface)
+{
+    if (!surface) {
+        return SDL_FALSE;
+    }
+
+    if (!(surface->map->info.flags & SDL_COPY_RLE_DESIRED)) {
+        return SDL_FALSE;
+    }
+
+    return SDL_TRUE;
+}
+
 int
 SDL_SetColorKey(SDL_Surface * surface, int flag, Uint32 key)
 {
@@ -1026,7 +1040,7 @@ SDL_ConvertSurface(SDL_Surface * surface, const SDL_PixelFormat * format,
     surface->map->info.g = 0xFF;
     surface->map->info.b = 0xFF;
     surface->map->info.a = 0xFF;
-    surface->map->info.flags = 0;
+    surface->map->info.flags = (copy_flags & (SDL_COPY_RLE_COLORKEY | SDL_COPY_RLE_ALPHAKEY));
     SDL_InvalidateMap(surface->map);
 
     /* Copy over the image data */
@@ -1259,6 +1273,7 @@ int SDL_ConvertPixels(int width, int height,
     SDL_BlitMap src_blitmap, dst_blitmap;
     SDL_Rect rect;
     void *nonconst_src = (void *) src;
+    int ret;
 
     /* Check to make sure we are blitting somewhere, so we don't crash */
     if (!dst) {
@@ -1311,7 +1326,12 @@ int SDL_ConvertPixels(int width, int height,
     rect.y = 0;
     rect.w = width;
     rect.h = height;
-    return SDL_LowerBlit(&src_surface, &rect, &dst_surface, &rect);
+    ret = SDL_LowerBlit(&src_surface, &rect, &dst_surface, &rect);
+
+    /* Free blitmap reference, after blitting between stack'ed surfaces */
+    SDL_InvalidateMap(src_surface.map);
+
+    return ret;
 }
 
 /*
@@ -1327,6 +1347,8 @@ SDL_FreeSurface(SDL_Surface * surface)
         return;
     }
     SDL_InvalidateMap(surface->map);
+
+    SDL_InvalidateAllBlitMap(surface);
 
     if (--surface->refcount > 0) {
         return;

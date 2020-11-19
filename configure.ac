@@ -413,6 +413,7 @@ SOURCES="$SOURCES $srcdir/src/file/*.c"
 SOURCES="$SOURCES $srcdir/src/haptic/*.c"
 SOURCES="$SOURCES $srcdir/src/joystick/*.c"
 SOURCES="$SOURCES $srcdir/src/libm/*.c"
+SOURCES="$SOURCES $srcdir/src/misc/*.c"
 SOURCES="$SOURCES $srcdir/src/power/*.c"
 #SOURCES="$SOURCES $srcdir/src/filesystem/*.c"
 SOURCES="$SOURCES $srcdir/src/render/*.c"
@@ -1319,8 +1320,8 @@ dnl Check for ARM instruction support using gas syntax
 CheckARM()
 {
     AC_ARG_ENABLE(arm-simd,
-AC_HELP_STRING([--enable-arm-simd], [use SIMD assembly blitters on ARM [[default=yes]]]),
-                  enable_arm_simd=$enableval, enable_arm_simd=yes)
+AC_HELP_STRING([--enable-arm-simd], [use SIMD assembly blitters on ARM [[default=no]]]),
+                  enable_arm_simd=$enableval, enable_arm_simd=no)
     if test x$enable_video = xyes -a x$enable_assembly = xyes -a x$enable_arm_simd = xyes; then
         save_CFLAGS="$CFLAGS"
         have_arm_simd=no
@@ -2157,7 +2158,7 @@ AS_HELP_STRING([--enable-render-metal], [enable the Metal render driver [[defaul
           #import <Metal/Metal.h>
           #import <QuartzCore/CAMetalLayer.h>
 
-          #if !TARGET_CPU_X86_64
+          #if TARGET_CPU_X86
           #error Metal doesn't work on this configuration
           #endif
         ],[
@@ -2245,8 +2246,8 @@ AS_HELP_STRING([--enable-video-kmsdrm], [use KMSDRM video driver [[default=no]]]
     if test x$enable_video = xyes -a x$enable_video_kmsdrm = xyes; then
         video_kmsdrm=no
 
-        PKG_CHECK_MODULES([LIBDRM], [libdrm >= 2.4.46], libdrm_avail=yes, libdrm_avail=no)
-        PKG_CHECK_MODULES([LIBGBM], [gbm >= 9.0.0], libgbm_avail=yes, libgbm_avail=no)
+        PKG_CHECK_MODULES([LIBDRM], [libdrm >= 1.4.82], libdrm_avail=yes, libdrm_avail=no)
+        PKG_CHECK_MODULES([LIBGBM], [gbm >= 11.1.0], libgbm_avail=yes, libgbm_avail=no)
 
         if test x$libdrm_avail = xyes -a x$libgbm_avail = xyes; then
             video_kmsdrm=yes
@@ -2373,6 +2374,7 @@ CheckOpenGLESX11()
           #define LINUX
           #define EGL_API_FB
           #define MESA_EGL_NO_X11_HEADERS
+          #define EGL_NO_X11
           #include <EGL/egl.h>
           #include <EGL/eglext.h>
         ],[
@@ -2572,7 +2574,7 @@ CheckVulkan()
                   #include <Metal/Metal.h>
                   #include <QuartzCore/CAMetalLayer.h>
 
-                  #if !TARGET_CPU_X86_64
+                  #if TARGET_CPU_X86
                   #error Vulkan doesn't work on this configuration
                   #endif
                 ],[
@@ -2639,6 +2641,28 @@ CheckInputKD()
     if test x$use_input_kd = xyes; then
         AC_DEFINE(SDL_INPUT_LINUXKD, 1, [ ])
         SUMMARY_input="${SUMMARY_input} linuxkd"
+    fi
+}
+
+
+dnl See if we can use the FreeBSD kernel kbio.h header
+CheckInputKBIO()
+{
+    AC_MSG_CHECKING(for FreeBSD kbio.h)
+    use_input_kbio=no
+    AC_TRY_COMPILE([
+      #include <sys/kbio.h>
+      #include <sys/ioctl.h>
+    ],[
+    	accentmap_t accTable;
+        ioctl(0, KDENABIO, 1);
+    ],[
+    use_input_kbio=yes
+    ])
+    AC_MSG_RESULT($use_input_kbio)
+    if test x$use_input_kbio = xyes; then
+        AC_DEFINE(SDL_INPUT_FBSDKBIO, 1, [ ])
+        SUMMARY_input="${SUMMARY_input} fbsdkbio"
     fi
 }
 
@@ -3289,7 +3313,7 @@ CheckHIDAPI()
     # so we'll just use libusb when it's available.
     case "$host" in
         # libusb does not support iOS
-        arm*-apple-darwin* | *-ios-* )
+        *-ios-* )
             skiplibusb=yes
             ;;
         # On the other hand, *BSD specifically uses libusb only
@@ -3523,6 +3547,9 @@ case "$host" in
           linux)
               CheckInputKD
           ;;
+          freebsd)
+              CheckInputKBIO
+          ;;
         esac
         CheckTslib
         CheckUSBHID
@@ -3532,6 +3559,9 @@ case "$host" in
         CheckLinuxVersion
         CheckRPATH
         CheckVivanteVideo
+
+        SOURCES="$SOURCES $srcdir/src/misc/unix/*.c"
+        have_misc=yes
 
         SOURCES="$SOURCES $srcdir/src/locale/unix/*.c"
         have_locale=yes
@@ -3571,7 +3601,7 @@ case "$host" in
         # Set up files for the joystick library
         if test x$enable_joystick = xyes; then
           case $ARCH in
-            linux)
+            linux|freebsd)
                 AC_DEFINE(SDL_JOYSTICK_LINUX, 1, [ ])
                 SOURCES="$SOURCES $srcdir/src/joystick/linux/*.c"
                 SOURCES="$SOURCES $srcdir/src/joystick/steam/*.c"
@@ -3588,7 +3618,7 @@ case "$host" in
         # Set up files for the haptic library
         if test x$enable_haptic = xyes; then
           case $ARCH in
-            linux)
+            linux|freebsd)
                 if test x$use_input_events = xyes; then
                     AC_DEFINE(SDL_HAPTIC_LINUX, 1, [ ])
                     SOURCES="$SOURCES $srcdir/src/haptic/linux/*.c"
@@ -3654,9 +3684,12 @@ case "$host" in
         fi
         # Set up files for evdev input
         if test x$use_input_events = xyes; then
-            SOURCES="$SOURCES $srcdir/src/core/linux/SDL_evdev*.c"
+            SOURCES="$SOURCES $srcdir/src/core/linux/SDL_evdev.c"
+            SOURCES="$SOURCES $srcdir/src/core/linux/SDL_evdev_kbd.c"
+            SOURCES="$SOURCES $srcdir/src/core/freebsd/SDL_evdev_kbd_freebsd.c"
         fi       
         # Set up other core UNIX files
+        SOURCES="$SOURCES $srcdir/src/core/linux/SDL_evdev_capabilities.c"
         SOURCES="$SOURCES $srcdir/src/core/linux/SDL_threadprio.c"
         SOURCES="$SOURCES $srcdir/src/core/unix/*.c"
         ;;
@@ -3684,6 +3717,9 @@ case "$host" in
 
         # Set up the core platform files
         SOURCES="$SOURCES $srcdir/src/core/windows/*.c"
+
+        SOURCES="$SOURCES $srcdir/src/misc/windows/*.c"
+        have_misc=yes
 
         # Use the Windows locale APIs.
         SOURCES="$SOURCES $srcdir/src/locale/windows/*.c"
@@ -3752,7 +3788,11 @@ AS_HELP_STRING([--enable-render-d3d], [enable the Direct3D render driver [[defau
             fi
         fi
         # Set up files for the sensor library
-        if test x$enable_sensor = xyes; then
+        AC_CHECK_HEADER(sensorsapi.h,have_winsensors=yes,have_winsensors=no)
+        if test x$have_winsensors = xyes; then
+            AC_DEFINE(HAVE_SENSORSAPI_H, 1, [ ])
+        fi
+        if test x$enable_sensor = xyes -a x$have_winsensors = xyes; then
             AC_DEFINE(SDL_SENSOR_WINDOWS, 1, [ ])
             SOURCES="$SOURCES $srcdir/src/sensor/windows/*.c"
             have_sensor=yes
@@ -3861,6 +3901,9 @@ AS_HELP_STRING([--enable-render-d3d], [enable the Direct3D render driver [[defau
             have_filesystem=yes
         fi
 
+        SOURCES="$SOURCES $srcdir/src/misc/haiku/*.cc"
+        have_misc=yes
+
         # Set up files for the locale library
         SOURCES="$SOURCES $srcdir/src/locale/haiku/*.cc"
         have_locale=yes
@@ -3872,7 +3915,7 @@ AS_HELP_STRING([--enable-render-d3d], [enable the Direct3D render driver [[defau
         #  other spins, like x86-64, use a more standard "libstdc++.so.*"
         AC_CHECK_FILE("/boot/system/lib/libstdc++.r4.so", EXTRA_LDFLAGS="$EXTRA_LDFLAGS -lstdc++.r4", EXTRA_LDFLAGS="$EXTRA_LDFLAGS -lstdc++")
         ;;
-    arm*-apple-darwin*|*-ios-*)
+    *-ios-*)
         ARCH=ios
 
         CheckVisibilityHidden
@@ -3884,6 +3927,9 @@ AS_HELP_STRING([--enable-render-d3d], [enable the Direct3D render driver [[defau
         CheckMETAL
         CheckVulkan
         CheckPTHREAD
+
+        SOURCES="$SOURCES $srcdir/src/misc/ios/*.m"
+        have_misc=yes
 
         # Set up files for the locale library
         SOURCES="$SOURCES $srcdir/src/locale/macosx/*.m"
@@ -3990,6 +4036,9 @@ AS_HELP_STRING([--enable-render-d3d], [enable the Direct3D render driver [[defau
         CheckVulkan
         CheckPTHREAD
         CheckHIDAPI
+
+        SOURCES="$SOURCES $srcdir/src/misc/macosx/*.m"
+        have_misc=yes
 
         # Set up files for the locale library
         SOURCES="$SOURCES $srcdir/src/locale/macosx/*.m"
@@ -4138,6 +4187,9 @@ AS_HELP_STRING([--enable-render-d3d], [enable the Direct3D render driver [[defau
         CheckPTHREAD
         CheckClockGettime
 
+        SOURCES="$SOURCES $srcdir/src/misc/riscos/*.c"
+        have_misc=yes
+
         # Set up files for the timer library
         if test x$enable_timers = xyes; then
             AC_DEFINE(SDL_TIMER_UNIX, 1, [ ])
@@ -4173,6 +4225,9 @@ AC_SUBST([INSTALL_SDL2_CONFIG], [$enable_sdl2_config])
 
 # Verify that we have all the platform specific files we need
 
+if test x$have_misc != xyes; then
+    SOURCES="$SOURCES $srcdir/src/misc/dummy/*.c"
+fi
 if test x$have_locale != xyes; then
     SOURCES="$SOURCES $srcdir/src/locale/dummy/*.c"
 fi
